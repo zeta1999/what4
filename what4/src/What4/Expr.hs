@@ -89,11 +89,26 @@ module What4.Expr
   , GroundEvalFn(..)
   , ExprRangeBindings
 
+  -- * IdxCache
+  , IdxCache
+  , newIdxCache
+  , lookupIdx
+  , lookupIdxValue
+  , insertIdxValue
+  , deleteIdxValue
+  , clearIdxCache
+  , idxCacheEval
+  , idxCacheEval'
+
+    -- * Term traversal
+  , memoTraversal
+  , traverseExpr
   ) where
 
 import qualified What4.SemiRing as SR
 import What4.Expr.AppTheory
 import What4.Expr.Builder
 import What4.Expr.GroundEval
+import What4.Expr.Traverse
 import What4.Expr.WeightedSum
 import What4.Expr.UnaryBV

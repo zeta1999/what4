@@ -136,6 +136,7 @@ import qualified What4.Expr.BoolMap as BM
 import           What4.Expr.Builder
 import           What4.Expr.GroundEval
 import qualified What4.Expr.StringSeq as SSeq
+import           What4.Expr.Traverse
 import qualified What4.Expr.WeightedSum as WSum
 import qualified What4.Expr.UnaryBV as UnaryBV
 import           What4.ProgramLoc

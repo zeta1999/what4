@@ -46,7 +46,7 @@ import What4.Utils.StringLiteral
 data State t = State
 data SomePred = forall t . SomePred (BoolExpr t)
 deriving instance Show SomePred
-type SimpleExprBuilder t fs = ExprBuilder t State fs
+type SimpleExprBuilder t = ExprBuilder t State
 
 
 debugOutputFiles :: Bool
@@ -63,12 +63,12 @@ userSymbol' s = case userSymbol s of
   Left e       -> error $ show e
   Right symbol -> symbol
 
-withSym :: FloatModeRepr fm -> (forall t . SimpleExprBuilder t (Flags fm) -> IO a) -> IO a
-withSym floatMode pred_gen = withIONonceGenerator $ \gen ->
-  pred_gen =<< newExprBuilder floatMode State gen
+withSym :: (forall t . SimpleExprBuilder t -> IO a) -> IO a
+withSym pred_gen = withIONonceGenerator $ \gen ->
+  pred_gen =<< newExprBuilder State gen
 
-withYices :: (forall t. SimpleExprBuilder t (Flags FloatReal) -> SolverProcess t (Yices.Connection t) -> IO ()) -> IO ()
-withYices action = withSym FloatRealRepr $ \sym ->
+withYices :: (forall t. SimpleExprBuilder t -> SolverProcess t (Yices.Connection t) -> IO ()) -> IO ()
+withYices action = withSym $ \sym ->
   do extendConfig Yices.yicesOptions (getConfiguration sym)
      bracket
        (do h <- if debugOutputFiles then Just <$> openFile "yices.out" WriteMode else return Nothing
@@ -77,16 +77,16 @@ withYices action = withSym FloatRealRepr $ \sym ->
        (\(h,s) -> void $ try @SomeException (shutdownSolverProcess s `finally` maybeClose h))
        (\(_,s) -> action sym s)
 
-withZ3 :: (forall t . SimpleExprBuilder t (Flags FloatIEEE) -> Session t Z3.Z3 -> IO ()) -> IO ()
+withZ3 :: (forall t . SimpleExprBuilder t -> Session t Z3.Z3 -> IO ()) -> IO ()
 withZ3 action = withIONonceGenerator $ \nonce_gen -> do
-  sym <- newExprBuilder FloatIEEERepr State nonce_gen
+  sym <- newExprBuilder State nonce_gen
   extendConfig Z3.z3Options (getConfiguration sym)
   Z3.withZ3 sym "z3" defaultLogData { logCallbackVerbose = (\_ -> putStrLn) } (action sym)
 
 withOnlineZ3
-  :: (forall t . SimpleExprBuilder t (Flags FloatIEEE) -> SolverProcess t (Writer Z3.Z3) -> IO a)
+  :: (forall t . SimpleExprBuilder t -> SolverProcess t (Writer Z3.Z3) -> IO a)
   -> IO a
-withOnlineZ3 action = withSym FloatIEEERepr $ \sym -> do
+withOnlineZ3 action = withSym $ \sym -> do
   extendConfig Z3.z3Options (getConfiguration sym)
   bracket
     (do h <- if debugOutputFiles then Just <$> openFile "z3.out" WriteMode else return Nothing
@@ -96,9 +96,9 @@ withOnlineZ3 action = withSym FloatIEEERepr $ \sym -> do
     (\(_,s) -> action sym s)
 
 withCVC4
-  :: (forall t . SimpleExprBuilder t (Flags FloatReal) -> SolverProcess t (Writer CVC4.CVC4) -> IO a)
+  :: (forall t . SimpleExprBuilder t -> SolverProcess t (Writer CVC4.CVC4) -> IO a)
   -> IO a
-withCVC4 action = withSym FloatRealRepr $ \sym -> do
+withCVC4 action = withSym $ \sym -> do
   extendConfig CVC4.cvc4Options (getConfiguration sym)
   bracket
     (do h <- if debugOutputFiles then Just <$> openFile "cvc4.out" WriteMode else return Nothing
@@ -120,19 +120,19 @@ withModel s p action = do
     Unknown                    -> "unknown" @?= ("sat" :: String)
 
 -- exists y . (x + 2.0) + (x + 2.0) < y
-iFloatTestPred
-  :: (  forall t
-      . (IsInterpretedFloatExprBuilder (SimpleExprBuilder t fs))
-     => SimpleExprBuilder t fs
-     -> IO SomePred
-     )
-iFloatTestPred sym = do
-  x  <- freshFloatConstant sym (userSymbol' "x") SingleFloatRepr
-  e0 <- iFloatLit sym SingleFloatRepr 2.0
-  e1 <- iFloatAdd @_ @SingleFloat sym RNE x e0
-  e2 <- iFloatAdd @_ @SingleFloat sym RTZ e1 e1
-  y  <- freshFloatBoundVar sym (userSymbol' "y") SingleFloatRepr
-  e3 <- iFloatLt @_ @SingleFloat sym e2 $ varExpr sym y
+iFloatTestPred ::
+  forall t fm.
+  (IsInterpretedFloatExprBuilder (SimpleExprBuilder t) fm) =>
+  FloatModeRepr fm ->
+  SimpleExprBuilder t ->
+  IO SomePred
+iFloatTestPred fm sym = do
+  x  <- freshFloatConstant sym fm (userSymbol' "x") SingleFloatRepr
+  e0 <- iFloatLit sym fm SingleFloatRepr 2.0
+  e1 <- iFloatAdd @_ @_ @SingleFloat sym fm RNE x e0
+  e2 <- iFloatAdd @_ @_ @SingleFloat sym fm RTZ e1 e1
+  y  <- freshFloatBoundVar sym fm (userSymbol' "y") SingleFloatRepr
+  e3 <- iFloatLt @_ @_ @SingleFloat sym fm e2 $ varExpr sym y
   SomePred <$> existsPred sym y e3
 
 floatSinglePrecision :: FloatPrecisionRepr Prec32
@@ -149,8 +149,8 @@ floatDoubleType = BaseFloatRepr floatDoublePrecision
 
 testInterpretedFloatReal :: TestTree
 testInterpretedFloatReal = testCase "Float interpreted as real" $ do
-  actual   <- withSym FloatRealRepr iFloatTestPred
-  expected <- withSym FloatRealRepr $ \sym -> do
+  actual   <- withSym (iFloatTestPred FloatRealRepr)
+  expected <- withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") knownRepr
     e0 <- realLit sym 2.0
     e1 <- realAdd sym x e0
@@ -162,39 +162,34 @@ testInterpretedFloatReal = testCase "Float interpreted as real" $ do
 
 testFloatUninterpreted :: TestTree
 testFloatUninterpreted = testCase "Float uninterpreted" $ do
-  actual   <- withSym FloatUninterpretedRepr iFloatTestPred
-  expected <- withSym FloatUninterpretedRepr $ \sym -> do
+  actual   <- withSym (iFloatTestPred FloatUninterpretedRepr)
+  expected <- withSym $ \sym -> do
     let bvtp = BaseBVRepr $ knownNat @32
     rne_rm           <- natLit sym $ fromIntegral $ fromEnum RNE
     rtz_rm           <- natLit sym $ fromIntegral $ fromEnum RTZ
     x                <- freshConstant sym (userSymbol' "x") knownRepr
-    real_to_float_fn <- freshTotalUninterpFn
-      sym
-      (userSymbol' "uninterpreted_real_to_float")
+    real_to_float_fn <- symFnByName sym "uninterpreted_real_to_float"
       (Ctx.empty Ctx.:> BaseNatRepr Ctx.:> BaseRealRepr)
       bvtp
     e0 <- realLit sym 2.0
     e1 <- applySymFn sym real_to_float_fn $ Ctx.empty Ctx.:> rne_rm Ctx.:> e0
-    add_fn <- freshTotalUninterpFn
-      sym
-      (userSymbol' "uninterpreted_float_add")
+    add_fn <- symFnByName sym "uninterpreted_float_add"
       (Ctx.empty Ctx.:> BaseNatRepr Ctx.:> bvtp Ctx.:> bvtp)
       bvtp
     e2    <- applySymFn sym add_fn $ Ctx.empty Ctx.:> rne_rm Ctx.:> x Ctx.:> e1
     e3    <- applySymFn sym add_fn $ Ctx.empty Ctx.:> rtz_rm Ctx.:> e2 Ctx.:> e2
     y     <- freshBoundVar sym (userSymbol' "y") knownRepr
-    lt_fn <- freshTotalUninterpFn sym
-                                  (userSymbol' "uninterpreted_float_lt")
-                                  (Ctx.empty Ctx.:> bvtp Ctx.:> bvtp)
-                                  BaseBoolRepr
+    lt_fn <- symFnByName sym "uninterpreted_float_lt"
+                (Ctx.empty Ctx.:> bvtp Ctx.:> bvtp)
+                BaseBoolRepr
     e4 <- applySymFn sym lt_fn $ Ctx.empty Ctx.:> e3 Ctx.:> varExpr sym y
     SomePred <$> existsPred sym y e4
   show actual @?= show expected
 
 testInterpretedFloatIEEE :: TestTree
 testInterpretedFloatIEEE = testCase "Float interpreted as IEEE float" $ do
-  actual   <- withSym FloatIEEERepr iFloatTestPred
-  expected <- withSym FloatIEEERepr $ \sym -> do
+  actual   <- withSym (iFloatTestPred FloatIEEERepr)
+  expected <- withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") knownRepr
     e0 <- floatLit sym floatSinglePrecision 2.0
     e1 <- floatAdd sym RNE x e0
@@ -299,7 +294,7 @@ testFloatFromBinary = testCase "float from binary" $ withZ3 $ \sym s -> do
 
 testFloatBinarySimplification :: TestTree
 testFloatBinarySimplification = testCase "float binary simplification" $
-  withSym FloatIEEERepr $ \sym -> do
+  withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") knownRepr
     e0 <- floatToBinary sym x
     e1 <- floatFromBinary sym floatSinglePrecision e0
@@ -308,15 +303,15 @@ testFloatBinarySimplification = testCase "float binary simplification" $
 testRealFloatBinarySimplification :: TestTree
 testRealFloatBinarySimplification =
   testCase "real float binary simplification" $
-    withSym FloatRealRepr $ \sym -> do
-      x  <- freshFloatConstant sym (userSymbol' "x") SingleFloatRepr
-      e0 <- iFloatToBinary sym SingleFloatRepr x
-      e1 <- iFloatFromBinary sym SingleFloatRepr e0
+    withSym $ \sym -> do
+      x  <- freshFloatConstant sym FloatRealRepr (userSymbol' "x") SingleFloatRepr
+      e0 <- iFloatToBinary sym FloatRealRepr SingleFloatRepr x
+      e1 <- iFloatFromBinary sym FloatRealRepr SingleFloatRepr e0
       e1 @?= x
 
 testFloatCastSimplification :: TestTree
 testFloatCastSimplification = testCase "float cast simplification" $
-  withSym FloatIEEERepr $ \sym -> do
+  withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") floatSingleType
     e0 <- floatCast sym floatDoublePrecision RNE x
     e1 <- floatCast sym floatSinglePrecision RNE e0
@@ -324,7 +319,7 @@ testFloatCastSimplification = testCase "float cast simplification" $
 
 testFloatCastNoSimplification :: TestTree
 testFloatCastNoSimplification = testCase "float cast no simplification" $
-  withSym FloatIEEERepr $ \sym -> do
+  withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") floatDoubleType
     e0 <- floatCast sym floatSinglePrecision RNE x
     e1 <- floatCast sym floatDoublePrecision RNE e0
@@ -332,7 +327,7 @@ testFloatCastNoSimplification = testCase "float cast no simplification" $
 
 testBVSelectShl :: TestTree
 testBVSelectShl = testCase "select shl simplification" $
-  withSym FloatIEEERepr $ \sym -> do
+  withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") knownRepr
     e0 <- bvLit sym (knownNat @64) 0
     e1 <- bvConcat sym e0 x
@@ -342,7 +337,7 @@ testBVSelectShl = testCase "select shl simplification" $
 
 testBVSelectLshr :: TestTree
 testBVSelectLshr = testCase "select lshr simplification" $
-  withSym FloatIEEERepr $ \sym -> do
+  withSym $ \sym -> do
     x  <- freshConstant sym (userSymbol' "x") knownRepr
     e0 <- bvConcat sym x =<< bvLit sym (knownNat @64) 0
     e1 <- bvLshr sym e0 =<< bvLit sym knownRepr 64
@@ -478,7 +473,7 @@ testBoundVarAsFree = testCase "boundvarasfree" $ withOnlineZ3 $ \sym s -> do
 
 zeroTupleTest ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 zeroTupleTest sym solver =
@@ -502,7 +497,7 @@ zeroTupleTest sym solver =
 
 oneTupleTest ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 oneTupleTest sym solver =
@@ -527,7 +522,7 @@ oneTupleTest sym solver =
 
 pairTest ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 pairTest sym solver =
@@ -545,7 +540,7 @@ pairTest sym solver =
 
 stringTest1 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 stringTest1 sym solver =
@@ -585,7 +580,7 @@ stringTest1 sym solver =
 
 stringTest2 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 stringTest2 sym solver =
@@ -627,7 +622,7 @@ stringTest2 sym solver =
 
 stringTest3 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 stringTest3 sym solver =
@@ -676,7 +671,7 @@ stringTest3 sym solver =
 
 stringTest4 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 stringTest4 sym solver =
@@ -716,7 +711,7 @@ stringTest4 sym solver =
 
 stringTest5 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 stringTest5 sym solver =
@@ -751,7 +746,7 @@ stringTest5 sym solver =
 
 forallTest ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 forallTest sym solver =
@@ -776,7 +771,7 @@ forallTest sym solver =
 
 binderTupleTest1 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 binderTupleTest1 sym solver =
@@ -788,7 +783,7 @@ binderTupleTest1 sym solver =
 
 binderTupleTest2 ::
   OnlineSolver t solver =>
-  SimpleExprBuilder t fs ->
+  SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
 binderTupleTest2 sym solver =

@@ -194,6 +194,6 @@ setInteractiveLogicAndOptions writer = do
     when (supportedFeatures writer `hasProblemFeature` useUnsatCores) $ do
       SMT2.setOption writer "produce-unsat-cores" "true"
 
-instance IsExprLoc t => OnlineSolver t (SMT2.Writer Z3) where
+instance OnlineSolver (SMT2.Writer Z3) where
   startSolverProcess = SMT2.startSolver Z3 SMT2.smtAckResult setInteractiveLogicAndOptions
   shutdownSolverProcess = SMT2.shutdownSolver Z3

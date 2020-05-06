@@ -51,6 +51,11 @@ module What4.Expr.Builder
   , startCaching
   , stopCaching
 
+  , ExprNonceBrand
+  , ExprNonce
+  , ExprLoc
+  , IsExprLoc
+
     -- * Specialized representations
   , bvUnary
   , natSum
@@ -206,7 +211,6 @@ import           What4.BaseTypes
 import           What4.Concrete
 import qualified What4.Config as CFG
 import           What4.Interface
-import           What4.ProgramLoc
 import qualified What4.SemiRing as SR
 import           What4.Symbol
 import           What4.Expr.App
@@ -258,8 +262,8 @@ cachedEval tbl k action = do
 -- but the constructor is kept hidden. The preferred way to construct
 -- an 'Expr' from a 'NonceApp' is to use 'sbNonceExpr'.
 data NonceAppExpr t (tp :: BaseType)
-   = NonceAppExprCtor { nonceExprId  :: {-# UNPACK #-} !(Nonce t tp)
-                     , nonceExprLoc :: !ProgramLoc
+   = NonceAppExprCtor { nonceExprId  :: {-# UNPACK #-} !(ExprNonce t tp)
+                     , nonceExprLoc :: !(ExprLoc t)
                      , nonceExprApp :: !(NonceApp t (Expr t) tp)
                      , nonceExprAbsValue :: !(AbstractValue tp)
                      }
@@ -272,8 +276,8 @@ data NonceAppExpr t (tp :: BaseType)
 -- the constructor is kept hidden. The preferred way to construct an
 -- 'Expr' from an 'App' is to use 'sbMakeExpr'.
 data AppExpr t (tp :: BaseType)
-   = AppExprCtor { appExprId  :: {-# UNPACK #-} !(Nonce t tp)
-                , appExprLoc :: !ProgramLoc
+   = AppExprCtor { appExprId  :: {-# UNPACK #-} !(ExprNonce t tp)
+                , appExprLoc :: !(ExprLoc t)
                 , appExprApp :: !(App (Expr t) tp)
                 , appExprAbsValue :: !(AbstractValue tp)
                 }
@@ -296,9 +300,9 @@ data AppExpr t (tp :: BaseType)
 -- Type @'Expr' t@ instantiates the type family @'SymExpr'
 -- ('ExprBuilder' t st)@.
 data Expr t (tp :: BaseType) where
-  SemiRingLiteral :: !(SR.SemiRingRepr sr) -> !(SR.Coefficient sr) -> !ProgramLoc -> Expr t (SR.SemiRingBase sr)
-  BoolExpr :: !Bool -> !ProgramLoc -> Expr t BaseBoolType
-  StringExpr :: !(StringLiteral si) -> !ProgramLoc -> Expr t (BaseStringType si)
+  SemiRingLiteral :: !(SR.SemiRingRepr sr) -> !(SR.Coefficient sr) -> !(ExprLoc t) -> Expr t (SR.SemiRingBase sr)
+  BoolExpr :: !Bool -> !(ExprLoc t) -> Expr t BaseBoolType
+  StringExpr :: !(StringLiteral si) -> !(ExprLoc t) -> Expr t (BaseStringType si)
   -- Application
   AppExpr :: {-# UNPACK #-} !(AppExpr t tp) -> Expr t tp
   -- An atomic predicate
@@ -318,7 +322,7 @@ asNonceApp :: Expr t tp -> Maybe (NonceApp t (Expr t) tp)
 asNonceApp (NonceAppExpr a) = Just (nonceExprApp a)
 asNonceApp _ = Nothing
 
-exprLoc :: Expr t tp -> ProgramLoc
+exprLoc :: Expr t tp -> ExprLoc t
 exprLoc (SemiRingLiteral _ _ l) = l
 exprLoc (BoolExpr _ l) = l
 exprLoc (StringExpr _ l) = l
@@ -326,8 +330,8 @@ exprLoc (NonceAppExpr a)  = nonceExprLoc a
 exprLoc (AppExpr a)   = appExprLoc a
 exprLoc (BoundVarExpr v) = bvarLoc v
 
-mkExpr :: Nonce t tp
-      -> ProgramLoc
+mkExpr :: ExprNonce t tp
+      -> ExprLoc t
       -> App (Expr t) tp
       -> AbstractValue tp
       -> Expr t tp
@@ -418,6 +422,8 @@ instance IsExpr (Expr t) where
   asStruct (asApp -> Just (StructCtor _ flds)) = Just flds
   asStruct _ = Nothing
 
+
+instance Pretty (ExprLoc t) => PrintExpr (Expr t) where
   printSymExpr = pretty
 
 
@@ -468,20 +474,20 @@ asWeightedSum sr x
 
 asConjunction :: Expr t BaseBoolType -> [(Expr t BaseBoolType, Polarity)]
 asConjunction (BoolExpr True _) = []
-asConjunction (asApp -> Just (ConjPred xs)) =
+asConjunction e@(asApp -> Just (ConjPred xs)) =
  case BM.viewBoolMap xs of
    BoolMapUnit     -> []
-   BoolMapDualUnit -> [(BoolExpr False initializationLoc, Positive)]
+   BoolMapDualUnit -> [(BoolExpr False (exprLoc e), Positive)]
    BoolMapTerms (tm:|tms) -> tm:tms
 asConjunction x = [(x,Positive)]
 
 
 asDisjunction :: Expr t BaseBoolType -> [(Expr t BaseBoolType, Polarity)]
 asDisjunction (BoolExpr False _) = []
-asDisjunction (asApp -> Just (NotPred (asApp -> Just (ConjPred xs)))) =
+asDisjunction e@(asApp -> Just (NotPred (asApp -> Just (ConjPred xs)))) =
  case BM.viewBoolMap xs of
    BoolMapUnit     -> []
-   BoolMapDualUnit -> [(BoolExpr True initializationLoc, Positive)]
+   BoolMapDualUnit -> [(BoolExpr True (exprLoc e), Positive)]
    BoolMapTerms (tm:|tms) -> map (over _2 BM.negatePolarity) (tm:tms)
 asDisjunction x = [(x,Positive)]
 
@@ -577,14 +583,14 @@ data ExprBuilder t (st :: Type -> Type)
           -- | The starting size when building a new cache
         , sbCacheStartSize :: !(CFG.OptionSetting BaseIntegerType)
           -- | Counter to generate new unique identifiers for elements and functions.
-        , exprCounter :: !(NonceGenerator IO t)
+        , exprCounter :: !(NonceGenerator IO (ExprNonceBrand t))
           -- | Reference to current allocator for expressions.
         , curAllocator :: !(IORef (ExprAllocator t))
           -- | Number of times an 'Expr' for a non-linear operation has been
           -- created.
         , sbNonLinearOps :: !(IORef Integer)
           -- | The current program location
-        , sbProgramLoc :: !(IORef ProgramLoc)
+        , sbProgramLoc :: !(IORef (ExprLoc t))
           -- | Additional state maintained by the state manager
         , sbStateManager :: !(IORef (st t))
 
@@ -600,8 +606,8 @@ data ExprBuilder t (st :: Type -> Type)
 type instance SymFn (ExprBuilder t st) = ExprSymFn t (Expr t)
 type instance SymExpr (ExprBuilder t st) = Expr t
 type instance BoundVar (ExprBuilder t st) = ExprBoundVar t
-type instance SymAnnotation (ExprBuilder t st) = Nonce t
-
+type instance SymAnnotation (ExprBuilder t st) = ExprNonce t
+type instance SymLoc (ExprBuilder t st) = ExprLoc t
 
 -- | Get abstract value associated with element.
 exprAbsValue :: Expr t tp -> AbstractValue tp
@@ -632,12 +638,12 @@ instance HasAbsValue (Expr t) where
 -- Parameter @t@ is a phantom type brand used to track nonces.
 data ExprAllocator t
    = ExprAllocator { appExpr  :: forall tp
-                            .  ProgramLoc
+                            .  ExprLoc t
                             -> App (Expr t) tp
                             -> AbstractValue tp
                             -> IO (Expr t tp)
                   , nonceExpr :: forall tp
-                             .  ProgramLoc
+                             .  ExprLoc t
                              -> NonceApp t (Expr t) tp
                              -> AbstractValue tp
                              -> IO (Expr t tp)
@@ -823,17 +829,17 @@ boundVars' _ _ = return Set.empty
 ------------------------------------------------------------------------
 -- Pretty printing
 
-instance Show (Expr t tp) where
+instance Pretty (ExprLoc t) => Show (Expr t tp) where
   show = show . ppExpr
 
-instance Pretty (Expr t tp) where
+instance Pretty (ExprLoc t) => Pretty (Expr t tp) where
   pretty = ppExpr
 
 
 -- | @AppPPExpr@ represents a an application, and it may be let bound.
 data AppPPExpr
    = APE { apeIndex :: !PPIndex
-         , apeLoc :: !ProgramLoc
+         , apeLoc :: !Doc
          , apeName :: !Text
          , apeExprs :: ![PPExpr]
          , apeLength :: !Int
@@ -883,7 +889,7 @@ defaultPPExprOpts =
             }
 
 -- | Pretty print an 'Expr' using let bindings to create the term.
-ppExpr :: Expr t tp -> Doc
+ppExpr :: Pretty (ExprLoc t) => Expr t tp -> Doc
 ppExpr e
      | Prelude.null bindings = ppExprDoc False r
      | otherwise =
@@ -891,10 +897,10 @@ ppExpr e
          text " in" <+> align (ppExprDoc False r)
   where (bindings,r) = runST (ppExpr' e defaultPPExprOpts)
 
-instance ShowF (Expr t)
+instance Pretty (ExprLoc t) => ShowF (Expr t)
 
 -- | Pretty print the top part of an element.
-ppExprTop :: Expr t tp -> Doc
+ppExprTop :: Pretty (ExprLoc t) => Expr t tp -> Doc
 ppExprTop e = ppExprDoc False r
   where (_,r) = runST (ppExpr' e defaultPPExprOpts)
 
@@ -914,7 +920,8 @@ findExprToRemove exprs0 = go [] exprs0 Nothing
           go (AppPPExpr a:prev) exprs (Just (reverse prev, a, exprs))
 
 
-ppExpr' :: forall t tp s . Expr t tp -> PPExprOpts -> ST s ([Doc], PPExpr)
+ppExpr' :: forall t tp s.
+  Pretty (ExprLoc t) => Expr t tp -> PPExprOpts -> ST s ([Doc], PPExpr)
 ppExpr' e0 o = do
   let max_width = ppExpr_maxWidth o
   let use_decimal = ppExpr_useDecimal o
@@ -946,7 +953,7 @@ ppExpr' e0 o = do
                    ExprPPIndex e -> "v" ++ show e
                    RatPPIndex _ -> "r" ++ show cnt
         let lhs = parenIf False (text nm) (text <$> args)
-        let doc = text "--" <+> pretty (plSourceLoc (apeLoc a)) <$$>
+        let doc = text "--" <+> apeLoc a <$$>
                   lhs <+> text "=" <+> uncurry (parenIf False) (apeDoc a)
         modifySTRef' bindingsRef (Seq.|> doc)
         let len = length nm + sum ((\arg_s -> length arg_s + 1) <$> args)
@@ -978,7 +985,7 @@ ppExpr' e0 o = do
            return (FixedPPExpr (text (Text.unpack nm)) exprs cur_width)
 
       renderApp :: PPIndex
-                -> ProgramLoc
+                -> ExprLoc t
                 -> Text
                 -> [PrettyArg (Expr t)]
                 -> ST s AppPPExpr
@@ -988,14 +995,14 @@ ppExpr' e0 o = do
         let total_width = Text.length nm + sum ((\e -> 1 + ppExprLength e) <$> exprs0)
         (exprs, cur_width) <- fixLength total_width exprs0
         return APE { apeIndex = idx
-                   , apeLoc = loc
+                   , apeLoc = pretty loc
                    , apeName = nm
                    , apeExprs = exprs
                    , apeLength = cur_width
                    }
 
       cacheResult :: PPIndex
-                  -> ProgramLoc
+                  -> ExprLoc t
                   -> PrettyApp (Expr t)
                   -> ST s PPExpr
       cacheResult _ _ (nm,[]) = do
@@ -1075,14 +1082,14 @@ ppExpr' e0 o = do
 -- Uncached storage
 
 -- | Create a new storage that does not do hash consing.
-newStorage :: NonceGenerator IO t -> IO (ExprAllocator t)
+newStorage :: NonceGenerator IO (ExprNonceBrand t) -> IO (ExprAllocator t)
 newStorage g = do
   return $! ExprAllocator { appExpr = uncachedExprFn g
                          , nonceExpr = uncachedNonceExpr g
                          }
 
-uncachedExprFn :: NonceGenerator IO t
-              -> ProgramLoc
+uncachedExprFn :: NonceGenerator IO (ExprNonceBrand t)
+              -> ExprLoc t
               -> App (Expr t) tp
               -> AbstractValue tp
               -> IO (Expr t tp)
@@ -1090,8 +1097,8 @@ uncachedExprFn g pc a v = do
   n <- freshNonce g
   return $! mkExpr n pc a v
 
-uncachedNonceExpr :: NonceGenerator IO t
-                 -> ProgramLoc
+uncachedNonceExpr :: NonceGenerator IO (ExprNonceBrand t)
+                 -> ExprLoc t
                  -> NonceApp t (Expr t) tp
                  -> AbstractValue tp
                  -> IO (Expr t tp)
@@ -1106,9 +1113,9 @@ uncachedNonceExpr g pc p v = do
 ------------------------------------------------------------------------
 -- Cached storage
 
-cachedNonceExpr :: NonceGenerator IO t
+cachedNonceExpr :: NonceGenerator IO (ExprNonceBrand t)
                -> PH.HashTable RealWorld (NonceApp t (Expr t)) (Expr t)
-               -> ProgramLoc
+               -> ExprLoc t
                -> NonceApp t (Expr t) tp
                -> AbstractValue tp
                -> IO (Expr t tp)
@@ -1128,9 +1135,9 @@ cachedNonceExpr g h pc p v = do
 
 
 cachedAppExpr :: forall t tp
-               . NonceGenerator IO t
+               . NonceGenerator IO (ExprNonceBrand t)
               -> PH.HashTable RealWorld (App (Expr t)) (Expr t)
-              -> ProgramLoc
+              -> ExprLoc t
               -> App (Expr t) tp
               -> AbstractValue tp
               -> IO (Expr t tp)
@@ -1146,7 +1153,7 @@ cachedAppExpr g h pc a v = do
 
 -- | Create a storage that does hash consing.
 newCachedStorage :: forall t
-                  . NonceGenerator IO t
+                  . NonceGenerator IO (ExprNonceBrand t)
                  -> Int
                  -> IO (ExprAllocator t)
 newCachedStorage g sz = stToIO $ do
@@ -1170,7 +1177,7 @@ instance PolyEq (Expr t x) (Expr t y) where
 -- an 'IO' hash table. Parameter @t@ is a phantom type brand used to
 -- track nonces.
 newtype IdxCache t (f :: BaseType -> Type)
-      = IdxCache { cMap :: IORef (PM.MapF (Nonce t) f) }
+      = IdxCache { cMap :: IORef (PM.MapF (ExprNonce t) f) }
 
 -- | Create a new IdxCache
 newIdxCache :: MonadIO m => m (IdxCache t f)
@@ -1187,24 +1194,24 @@ lookupIdxValue c (AppExpr e)  = lookupIdx c (appExprId e)
 lookupIdxValue c (BoundVarExpr i) = lookupIdx c (bvarId i)
 
 {-# INLINE lookupIdx #-}
-lookupIdx :: (MonadIO m) => IdxCache t f -> Nonce t tp -> m (Maybe (f tp))
+lookupIdx :: (MonadIO m) => IdxCache t f -> ExprNonce t tp -> m (Maybe (f tp))
 lookupIdx c n = liftIO $ PM.lookup n <$> readIORef (cMap c)
 
 {-# INLINE insertIdxValue #-}
 -- | Bind the value to the given expr in the index.
-insertIdxValue :: MonadIO m => IdxCache t f -> Nonce t tp -> f tp -> m ()
+insertIdxValue :: MonadIO m => IdxCache t f -> ExprNonce t tp -> f tp -> m ()
 insertIdxValue c e v = seq v $ liftIO $ modifyIORef (cMap c) $ PM.insert e v
 
 {-# INLINE deleteIdxValue #-}
 -- | Remove a value from the IdxCache
-deleteIdxValue :: MonadIO m => IdxCache t f -> Nonce t (tp :: BaseType) -> m ()
+deleteIdxValue :: MonadIO m => IdxCache t f -> ExprNonce t (tp :: BaseType) -> m ()
 deleteIdxValue c e = liftIO $ modifyIORef (cMap c) $ PM.delete e
 
 -- | Remove all values from the IdxCache
 clearIdxCache :: MonadIO m => IdxCache t f -> m ()
 clearIdxCache c = liftIO $ writeIORef (cMap c) PM.empty
 
-exprMaybeId :: Expr t tp -> Maybe (Nonce t tp)
+exprMaybeId :: Expr t tp -> Maybe (ExprNonce t tp)
 exprMaybeId SemiRingLiteral{} = Nothing
 exprMaybeId StringExpr{} = Nothing
 exprMaybeId BoolExpr{} = Nothing
@@ -1234,7 +1241,7 @@ idxCacheEval c e m = do
 {-# INLINE idxCacheEval' #-}
 idxCacheEval' :: (MonadIO m)
               => IdxCache t f
-              -> Nonce t tp
+              -> ExprNonce t tp
               -> m (f tp)
               -> m (f tp)
 idxCacheEval' c n m = do
@@ -1249,13 +1256,14 @@ idxCacheEval' c n m = do
 ------------------------------------------------------------------------
 -- ExprBuilder operations
 
-curProgramLoc :: ExprBuilder t st -> IO ProgramLoc
+curProgramLoc :: ExprBuilder t st -> IO (ExprLoc t)
 curProgramLoc sym = readIORef (sbProgramLoc sym)
 
 -- | Create an element from a nonce app.
-sbNonceExpr :: ExprBuilder t st
-           -> NonceApp t (Expr t) tp
-           -> IO (Expr t tp)
+sbNonceExpr ::
+  ExprBuilder t st ->
+  NonceApp t (Expr t) tp ->
+  IO (Expr t tp)
 sbNonceExpr sym a = do
   s <- readIORef (curAllocator sym)
   pc <- curProgramLoc sym
@@ -1315,10 +1323,10 @@ sbMakeBoundVar sym nm tp k absVal = do
                  }
 
 -- | Create fresh index
-sbFreshIndex :: ExprBuilder t st -> IO (Nonce t (tp::BaseType))
+sbFreshIndex :: ExprBuilder t st -> IO (ExprNonce t (tp::BaseType))
 sbFreshIndex sb = freshNonce (exprCounter sb)
 
-sbFreshSymFnNonce :: ExprBuilder t st -> IO (Nonce t (ctx:: Ctx BaseType))
+sbFreshSymFnNonce :: ExprBuilder t st -> IO (ExprNonce t (ctx:: Ctx BaseType))
 sbFreshSymFnNonce sb = freshNonce (exprCounter sb)
 
 ------------------------------------------------------------------------
@@ -1380,7 +1388,7 @@ cacheTerms :: CFG.ConfigOption BaseBoolType
 cacheTerms = CFG.configOption BaseBoolRepr "use_cache"
 
 cacheOptStyle ::
-  NonceGenerator IO t ->
+  NonceGenerator IO (ExprNonceBrand t) ->
   IORef (ExprAllocator t) ->
   CFG.OptionSetting BaseIntegerType ->
   CFG.OptionStyle BaseBoolType
@@ -1400,7 +1408,7 @@ cacheOptStyle gen storageRef szSetting =
             writeIORef storageRef s
 
 cacheOptDesc ::
-  NonceGenerator IO t ->
+  NonceGenerator IO (ExprNonceBrand t) ->
   IORef (ExprAllocator t) ->
   CFG.OptionSetting BaseIntegerType ->
   CFG.ConfigDesc
@@ -1414,17 +1422,18 @@ cacheOptDesc gen storageRef szSetting =
 
 newExprBuilder ::
   st t {- ^ Current state for simple builder. -} ->
-  NonceGenerator IO t {- ^ Nonce generator for names -} ->
+  NonceGenerator IO (ExprNonceBrand t) {- ^ Nonce generator for names -} ->
+  ExprLoc t ->
   IO (ExprBuilder t st)
-newExprBuilder st gen = do
+newExprBuilder st gen initLoc = do
   st_ref <- newIORef st
   es <- newStorage gen
 
-  let t = BoolExpr True initializationLoc
-  let f = BoolExpr False initializationLoc
-  let z = SemiRingLiteral SR.SemiRingRealRepr 0 initializationLoc
+  let t = BoolExpr True initLoc
+  let f = BoolExpr False initLoc
+  let z = SemiRingLiteral SR.SemiRingRealRepr 0 initLoc
 
-  loc_ref       <- newIORef initializationLoc
+  loc_ref       <- newIORef initLoc
   storage_ref   <- newIORef es
   bindings_ref  <- newIORef emptySymbolVarBimap
   uninterp_fn_cache_ref <- newIORef Map.empty
@@ -1595,7 +1604,7 @@ data CachedSymFn t c
 -- | Data structure used for caching evaluation.
 data EvalHashTables t
    = EvalHashTables { exprTable :: !(PH.HashTable RealWorld (Expr t) (Expr t))
-                    , fnTable  :: !(PH.HashTable RealWorld (Nonce t) (CachedSymFn t))
+                    , fnTable  :: !(PH.HashTable RealWorld (ExprNonce t) (CachedSymFn t))
                     }
 
 -- | Evaluate a simple function.

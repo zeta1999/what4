@@ -7,8 +7,10 @@ Maintainer  : jhendrix@galois.com
 This module defines datastructures that encode the basic
 syntax formers used in What4.ExprBuidler.
 -}
+
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE EmptyCase #-}
@@ -59,7 +61,6 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           What4.BaseTypes
 import           What4.Interface
-import           What4.ProgramLoc
 import qualified What4.SemiRing as SR
 import qualified What4.Expr.ArrayUpdateMap as AUM
 import           What4.Expr.BoolMap (BoolMap, Polarity(..), BoolMapView(..), Wrap(..))
@@ -77,6 +78,13 @@ import qualified What4.Utils.BVDomain as BVD
 import           What4.Utils.Complex
 import           What4.Utils.IncrHash
 import qualified What4.Utils.AnnotatedMap as AM
+
+
+type family ExprNonceBrand (t :: Type) :: Type
+type family ExprLoc (t :: Type) :: Type
+
+type ExprNonce (t::Type) = Nonce (ExprNonceBrand t)
+type IsExprLoc t = (Ord (ExprLoc t), Pretty (ExprLoc t))
 
 ------------------------------------------------------------------------
 -- ExprBoundVar
@@ -100,8 +108,8 @@ data VarKind
 -- values, but the constructor is kept hidden. The preferred way to
 -- construct a 'ExprBoundVar' is to use 'freshBoundVar'.
 data ExprBoundVar t (tp :: BaseType) =
-  BVar { bvarId  :: {-# UNPACK #-} !(Nonce t tp)
-       , bvarLoc :: !ProgramLoc
+  BVar { bvarId  :: {-# UNPACK #-} !(ExprNonce t tp)
+       , bvarLoc :: !(ExprLoc t)
        , bvarName :: !SolverSymbol
        , bvarType :: !(BaseTypeRepr tp)
        , bvarKind :: !VarKind
@@ -140,7 +148,7 @@ instance HashableF (ExprBoundVar t) where
 data NonceApp t (e :: BaseType -> Type) (tp :: BaseType) where
   Annotation ::
     !(BaseTypeRepr tp) ->
-    !(Nonce t tp) ->
+    !(ExprNonce t tp) ->
     !(e tp) ->
     NonceApp t e tp
 
@@ -203,13 +211,13 @@ data SymFnInfo t e (args :: Ctx BaseType) (ret :: BaseType)
 -- Type @'ExprSymFn' t@ instantiates the type family @'SymFn'
 -- ('ExprBuilder' t st)@.
 data ExprSymFn t e (args :: Ctx BaseType) (ret :: BaseType)
-   = ExprSymFn { symFnId :: !(Nonce t (args ::> ret))
+   = ExprSymFn { symFnId :: !(ExprNonce t (args ::> ret))
                  -- /\ A unique identifier for the function
                  , symFnName :: !SolverSymbol
                  -- /\ Name of the function
                  , symFnInfo :: !(SymFnInfo t e args ret)
                  -- /\ Information about function
-                 , symFnLoc  :: !ProgramLoc
+                 , symFnLoc  :: !(ExprLoc t)
                  -- /\ Location where function was defined.
                  }
 
@@ -1298,16 +1306,16 @@ $(return [])
 ------------------------------------------------------------------------
 -- App operations
 
-
-ppVar :: String -> SolverSymbol -> Nonce t tp -> BaseTypeRepr tp -> String
-ppVar pr sym i tp = pr ++ show sym ++ "@" ++ show (indexValue i) ++ ":" ++ ppVarTypeCode tp
-
-ppBoundVar :: ExprBoundVar t tp -> String
+ppBoundVar :: forall t tp. ExprBoundVar t tp -> String
 ppBoundVar v =
   case bvarKind v of
     QuantifierVarKind -> ppVar "?" (bvarName v) (bvarId v) (bvarType v)
     LatchVarKind   -> ppVar "l" (bvarName v) (bvarId v) (bvarType v)
     UninterpVarKind -> ppVar "c" (bvarName v) (bvarId v) (bvarType v)
+
+  where
+  ppVar pr sym i tp = pr ++ show sym ++ "@" ++ show (indexValue i) ++ ":" ++ ppVarTypeCode tp
+
 
 instance Show (ExprBoundVar t tp) where
   show = ppBoundVar

@@ -10,6 +10,7 @@
 --
 ------------------------------------------------------------------------
 
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 module What4.Solver.Adapter
   ( SolverAdapter(..)
@@ -43,8 +44,7 @@ data SolverAdapter st =
   { solver_adapter_name :: !String
 
     -- | Configuration options relevant to this solver adapter
-  , solver_adapter_config_options
-        :: ![ConfigDesc]
+  , solver_adapter_config_options :: ![ConfigDesc]
 
     -- | Operation to check the satisfiability of a formula.
     --   The final argument is a callback that calculates the ultimate result from
@@ -52,17 +52,18 @@ data SolverAdapter st =
     --   Note: the evaluation functions may cease to be avaliable after the
     --   callback completes, so any necessary information should be extracted from
     --   them before returning.
-  , solver_adapter_check_sat
-        :: !(forall t a.
-           ExprBuilder t st
-        -> LogData
-        -> [BoolExpr t]
-        -> (SatResult (GroundEvalFn t, Maybe (ExprRangeBindings t)) () -> IO a)
-        -> IO a)
+  , solver_adapter_check_sat ::
+        !(forall t a.
+           IsExprLoc t =>
+           ExprBuilder t st ->
+           LogData ->
+           [BoolExpr t] ->
+           (SatResult (GroundEvalFn t, Maybe (ExprRangeBindings t)) () -> IO a) ->
+           IO a)
 
     -- | Write an SMTLib2 problem instance onto the given handle, incorporating
     --   any solver-specific tweaks appropriate to this solver
-  , solver_adapter_write_smt2 :: !(forall t. ExprBuilder t st -> Handle -> [BoolExpr t] -> IO ())
+  , solver_adapter_write_smt2 :: !(forall t. IsExprLoc t => ExprBuilder t st -> Handle -> [BoolExpr t] -> IO ())
   }
 
 data LogData = LogData { logCallbackVerbose :: Int -> String -> IO ()

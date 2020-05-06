@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -43,8 +44,13 @@ import qualified What4.Solver.Z3 as Z3
 import qualified What4.Solver.Yices as Yices
 import What4.Utils.StringLiteral
 
+
+data What4Test s
+type instance ExprNonceBrand (What4Test t) = t
+type instance ExprLoc (What4Test t) = ()
+
 data State t = State
-data SomePred = forall t . SomePred (BoolExpr t)
+data SomePred = forall t . IsExprLoc t => SomePred (BoolExpr t)
 deriving instance Show SomePred
 type SimpleExprBuilder t = ExprBuilder t State
 
@@ -63,11 +69,11 @@ userSymbol' s = case userSymbol s of
   Left e       -> error $ show e
   Right symbol -> symbol
 
-withSym :: (forall t . SimpleExprBuilder t -> IO a) -> IO a
-withSym pred_gen = withIONonceGenerator $ \gen ->
-  pred_gen =<< newExprBuilder State gen
+withSym :: (forall t . IsExprLoc t => SimpleExprBuilder t -> IO a) -> IO a
+withSym pred_gen = withIONonceGenerator $ \(gen :: NonceGenerator IO s) ->
+  pred_gen =<< newExprBuilder (State :: State (What4Test s)) gen ()
 
-withYices :: (forall t. SimpleExprBuilder t -> SolverProcess t (Yices.Connection t) -> IO ()) -> IO ()
+withYices :: (forall t. IsExprLoc t => SimpleExprBuilder t -> SolverProcess t (Yices.Connection t) -> IO ()) -> IO ()
 withYices action = withSym $ \sym ->
   do extendConfig Yices.yicesOptions (getConfiguration sym)
      bracket
@@ -77,14 +83,13 @@ withYices action = withSym $ \sym ->
        (\(h,s) -> void $ try @SomeException (shutdownSolverProcess s `finally` maybeClose h))
        (\(_,s) -> action sym s)
 
-withZ3 :: (forall t . SimpleExprBuilder t -> Session t Z3.Z3 -> IO ()) -> IO ()
-withZ3 action = withIONonceGenerator $ \nonce_gen -> do
-  sym <- newExprBuilder State nonce_gen
-  extendConfig Z3.z3Options (getConfiguration sym)
-  Z3.withZ3 sym "z3" defaultLogData { logCallbackVerbose = (\_ -> putStrLn) } (action sym)
+withZ3 :: (forall t . IsExprLoc t => SimpleExprBuilder t -> Session t Z3.Z3 -> IO ()) -> IO ()
+withZ3 action = withSym $ \sym ->
+  do extendConfig Z3.z3Options (getConfiguration sym)
+     Z3.withZ3 sym "z3" defaultLogData { logCallbackVerbose = (\_ -> putStrLn) } (action sym)
 
 withOnlineZ3
-  :: (forall t . SimpleExprBuilder t -> SolverProcess t (Writer Z3.Z3) -> IO a)
+  :: (forall t . IsExprLoc t => SimpleExprBuilder t -> SolverProcess t (Writer Z3.Z3) -> IO a)
   -> IO a
 withOnlineZ3 action = withSym $ \sym -> do
   extendConfig Z3.z3Options (getConfiguration sym)
@@ -96,7 +101,7 @@ withOnlineZ3 action = withSym $ \sym -> do
     (\(_,s) -> action sym s)
 
 withCVC4
-  :: (forall t . SimpleExprBuilder t -> SolverProcess t (Writer CVC4.CVC4) -> IO a)
+  :: (forall t . IsExprLoc t => SimpleExprBuilder t -> SolverProcess t (Writer CVC4.CVC4) -> IO a)
   -> IO a
 withCVC4 action = withSym $ \sym -> do
   extendConfig CVC4.cvc4Options (getConfiguration sym)
@@ -107,11 +112,11 @@ withCVC4 action = withSym $ \sym -> do
     (\(h,s) -> void $ try @SomeException (shutdownSolverProcess s `finally` maybeClose h))
     (\(_,s) -> action sym s)
 
-withModel
-  :: Session t Z3.Z3
-  -> BoolExpr t
-  -> ((forall tp . What4.Expr.Expr t tp -> IO (GroundValue tp)) -> IO ())
-  -> IO ()
+withModel :: IsExprLoc t =>
+  Session t Z3.Z3 ->
+  BoolExpr t ->
+  ((forall tp . What4.Expr.Expr t tp -> IO (GroundValue tp)) -> IO ()) ->
+  IO ()
 withModel s p action = do
   assume (sessionWriter s) p
   runCheckSat s $ \case
@@ -122,7 +127,7 @@ withModel s p action = do
 -- exists y . (x + 2.0) + (x + 2.0) < y
 iFloatTestPred ::
   forall t fm.
-  (IsInterpretedFloatExprBuilder (SimpleExprBuilder t) fm) =>
+  (IsExprLoc t, IsInterpretedFloatExprBuilder (SimpleExprBuilder t) fm) =>
   FloatModeRepr fm ->
   SimpleExprBuilder t ->
   IO SomePred
@@ -472,7 +477,7 @@ testBoundVarAsFree = testCase "boundvarasfree" $ withOnlineZ3 $ \sym s -> do
   expectFailure $ checkSatisfiable s "test" py
 
 zeroTupleTest ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -496,7 +501,7 @@ zeroTupleTest sym solver =
        isUnsat res2 @? "unsat"
 
 oneTupleTest ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -521,7 +526,7 @@ oneTupleTest sym solver =
 
 
 pairTest ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -539,7 +544,7 @@ pairTest sym solver =
        isSat res2 @? "neg sat"
 
 stringTest1 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -579,7 +584,7 @@ stringTest1 sym solver =
 
 
 stringTest2 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -621,7 +626,7 @@ stringTest2 sym solver =
        _ -> fail "expected satisfable model"
 
 stringTest3 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -670,7 +675,7 @@ stringTest3 sym solver =
 
 
 stringTest4 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -710,7 +715,7 @@ stringTest4 sym solver =
        _ -> fail "expected satisfable model"
 
 stringTest5 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -745,7 +750,7 @@ stringTest5 sym solver =
 
 
 forallTest ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -770,7 +775,7 @@ forallTest sym solver =
          _ -> fail "expected satisfible model"
 
 binderTupleTest1 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -782,7 +787,7 @@ binderTupleTest1 sym solver =
     isSat res  @? "sat"
 
 binderTupleTest2 ::
-  OnlineSolver t solver =>
+  (IsExprLoc t, OnlineSolver t solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()

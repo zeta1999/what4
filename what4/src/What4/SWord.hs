@@ -30,6 +30,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module What4.SWord
   ( SWord(..)
@@ -126,7 +127,7 @@ data SWord sym where
   -- a zero-length bit vector. i.e. 0
 
 
-instance Show (SWord sym) where
+instance W.PrintExpr (SymExpr sym) => Show (SWord sym) where
   show (DBV bv) = show $ W.printSymExpr bv
   show ZBV      = "0:[0]"
 

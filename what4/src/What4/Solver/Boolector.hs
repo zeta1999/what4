@@ -11,6 +11,7 @@
 -- the results back.
 ------------------------------------------------------------------------
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -89,10 +90,12 @@ boolectorAdapter =
 instance SMT2.SMTLib2Tweaks Boolector where
   smtlib2tweaks = Boolector
 
-runBoolectorInOverride :: ExprBuilder t st
-                       -> LogData
-                       -> [BoolExpr t]
-                       -> IO (SatResult (GroundEvalFn t) ())
+runBoolectorInOverride ::
+  IsExprLoc t =>
+  ExprBuilder t st ->
+  LogData ->
+  [BoolExpr t] ->
+  IO (SatResult (GroundEvalFn t) ())
 runBoolectorInOverride sym logData ps = do
   -- Get boolector path.
   path <- findSolverPath boolectorPath (getConfiguration sym)
@@ -108,6 +111,7 @@ runBoolectorInOverride sym logData ps = do
       err_stream <- Streams.handleToInputStream err_h
       void $ forkIO $ logErrorStream err_stream (logCallbackVerbose logData 2)
       -- Write SMT2 input to Boolector.
+      initLoc <- getCurrentProgramLoc sym
       bindings <- getSymbolVarBimap sym
 
       in_str  <-
@@ -118,7 +122,7 @@ runBoolectorInOverride sym logData ps = do
                Streams.encodeUtf8 =<< teeOutputStream aux_str =<< Streams.handleToOutputStream in_h
 
       wtr <- SMT2.newWriter Boolector in_str nullAcknowledgementAction "Boolector"
-               False noFeatures False bindings
+               False noFeatures False initLoc bindings
       SMT2.setLogic wtr SMT2.qf_bv
       SMT2.assume wtr p
 
@@ -182,9 +186,11 @@ lookupBoolectorVar m evalFn nm =
     Nothing -> fail $ "Could not find variable "
                    ++ Text.unpack nm ++ " in Boolector output."
 
-parseBoolectorOutput :: SMT2.WriterConn t (SMT2.Writer Boolector)
-                     -> [String]
-                     -> IO (SatResult (GroundEvalFn t) ())
+parseBoolectorOutput ::
+  IsExprLoc t =>
+  SMT2.WriterConn t (SMT2.Writer Boolector) ->
+  [String] ->
+  IO (SatResult (GroundEvalFn t) ())
 parseBoolectorOutput c out_lines =
   case out_lines of
     "unsat":_ -> return (Unsat ())
@@ -220,7 +226,7 @@ instance SMT2.SMTLib2GenericSolver Boolector where
     SMT2.setProduceModels writer True
 
 setInteractiveLogicAndOptions ::
-  SMT2.SMTLib2Tweaks a =>
+  (IsExprLoc t, SMT2.SMTLib2Tweaks a) =>
   SMT2.WriterConn t (SMT2.Writer a) ->
   IO ()
 setInteractiveLogicAndOptions writer = do

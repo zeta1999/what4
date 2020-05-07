@@ -1706,7 +1706,7 @@ mkExpr (BoundVarExpr var) = do
             ++ show (plSourceLoc (bvarLoc var)) ++ "."
    UninterpVarKind -> do
      conn <- asks scConn
-     cacheWriterResult (bvarId var) DeleteNever $ do
+     cacheWriterResult (bvarId var) DeleteOnPop $ do
        checkVarTypeSupport var
        -- Use predefined var name if it has not been defined.
        var_name <- liftIO $ getSymbolName conn (VarSymbolBinding var)
@@ -2809,7 +2809,7 @@ getSMTSymFn conn fn arg_types = do
       -- Generate name.
       nm <- getSymbolName conn (FnSymbolBinding fn)
       ret_type <- mkSMTSymFn conn nm fn arg_types
-      cacheValueFn conn n DeleteNever $! SMTSymFn nm arg_types ret_type
+      cacheValueFn conn n DeleteOnPop $! SMTSymFn nm arg_types ret_type
       return (nm, ret_type)
 
 ------------------------------------------------------------------------

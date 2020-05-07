@@ -3543,6 +3543,18 @@ sbConcreteLookup sym arr0 mcidx idx
     -- Lookups on constant arrays just return value
   | Just (ConstantArray _ _ v) <- asApp arr0 = do
       return v
+
+  | Just (UpdateArray _ _ _ i v) <- asApp arr0
+  , Just ci <- asConcreteIndices i
+  , Just cidx <- mcidx
+  , ci == cidx =
+      return v
+  | Just (UpdateArray _ _ arr i _) <- asApp arr0
+  , Just ci <- asConcreteIndices i
+  , Just cidx <- mcidx
+  , ci /= cidx =
+      sbConcreteLookup sym arr mcidx idx
+
     -- Lookups on mux arrays just distribute over mux.
   | Just (BaseIte _ _ p x y) <- asApp arr0 = do
       xv <- sbConcreteLookup sym x mcidx idx

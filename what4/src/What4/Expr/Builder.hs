@@ -227,6 +227,7 @@ import qualified What4.Expr.UnaryBV as UnaryBV
 import           What4.Utils.AbstractDomains
 import           What4.Utils.Arithmetic
 import qualified What4.Utils.BVDomain as BVD
+import qualified What4.Utils.BVDomain.Bitwise as B
 import           What4.Utils.Complex
 import           What4.Utils.StringLiteral
 
@@ -250,7 +251,6 @@ cachedEval tbl k action = do
       seq r $ do
       stToIO $ PH.insert tbl k r
       return r
-
 
 
 -- | This type represents 'Expr' values that were built from a

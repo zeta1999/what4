@@ -75,6 +75,7 @@ import qualified What4.Expr.UnaryBV as UnaryBV
 import           What4.Utils.AbstractDomains
 import           What4.Utils.Arithmetic
 import qualified What4.Utils.BVDomain as BVD
+import qualified What4.Utils.BVDomain.Bitwise as B
 import           What4.Utils.Complex
 import           What4.Utils.IncrHash
 import qualified What4.Utils.AnnotatedMap as AM
@@ -267,10 +268,10 @@ instance IsExpr e => IsSymFn (ExprSymFn t e) where
 -------------------------------------------------------------------------------
 -- BVOrSet
 
-data BVOrNote w = BVOrNote !IncrHash !(BVD.BVDomain w)
+data BVOrNote w = BVOrNote !IncrHash !(B.Domain w)
 
 instance Semigroup (BVOrNote w) where
-  BVOrNote xh xa <> BVOrNote yh ya = BVOrNote (xh <> yh) (BVD.or xa ya)
+  BVOrNote xh xa <> BVOrNote yh ya = BVOrNote (xh <> yh) (B.or xa ya)
 
 newtype BVOrSet e w = BVOrSet (AM.AnnotatedMap (Wrap e (BaseBVType w)) (BVOrNote w) ())
 
@@ -281,7 +282,9 @@ traverseBVOrSet f (BVOrSet m) =
   foldr bvOrInsert (BVOrSet AM.empty) <$> traverse (f . unWrap . fst) (AM.toList m)
 
 bvOrInsert :: (OrdF e, HashableF e, HasAbsValue e) => e (BaseBVType w) -> BVOrSet e w -> BVOrSet e w
-bvOrInsert e (BVOrSet m) = BVOrSet $ AM.insert (Wrap e) (BVOrNote (mkIncrHash (hashF e)) (getAbsValue e)) () m
+bvOrInsert e (BVOrSet m) =
+  let nt = BVOrNote (mkIncrHash (hashF e)) (BVD.asBitwiseDomain (getAbsValue e)) in
+  BVOrSet $ AM.insert (Wrap e) nt () m
 
 bvOrSingleton :: (OrdF e, HashableF e, HasAbsValue e) => e (BaseBVType w) -> BVOrSet e w
 bvOrSingleton e = bvOrInsert e (BVOrSet AM.empty)
@@ -298,7 +301,7 @@ bvOrToList (BVOrSet m) = unWrap . fst <$> AM.toList m
 bvOrAbs :: (OrdF e, 1 <= w) => NatRepr w -> BVOrSet e w -> BVD.BVDomain w
 bvOrAbs w (BVOrSet m) =
   case AM.annotation m of
-    Just (BVOrNote _ a) -> a
+    Just (BVOrNote _ a) -> BVD.BVDBitwise a
     Nothing -> BVD.singleton w 0
 
 instance (OrdF e, TestEquality e) => Eq (BVOrSet e w) where
@@ -1015,19 +1018,18 @@ abstractEval f a0 = do
     BVSdiv w x y -> BVD.sdiv w (f x) (f y)
     BVSrem w x y -> BVD.srem w (f x) (f y)
 
-    BVShl  _ x y -> BVD.shl (f x) (f y)
-    BVLshr _ x y -> BVD.lshr (f x) (f y)
+    BVShl  w x y -> BVD.shl w (f x) (f y)
+    BVLshr w x y -> BVD.lshr w (f x) (f y)
     BVAshr w x y -> BVD.ashr w (f x) (f y)
-    BVRol  w _ _ -> BVD.any w -- TODO?
-    BVRor  w _ _ -> BVD.any w -- TODO?
+    BVRol  w x y -> BVD.rol w (f x) (f y)
+    BVRor  w x y -> BVD.ror w (f x) (f y)
     BVZext w x   -> BVD.zext (f x) w
     BVSext w x   -> BVD.sext (bvWidth x) (f x) w
     BVFill w _   -> BVD.range w (-1) 0
 
-    -- TODO: pretty sure we can do better for popcount, ctz and clz
-    BVPopcount w _ -> BVD.range w 0 (intValue w)
-    BVCountLeadingZeros w _ -> BVD.range w 0 (intValue w)
-    BVCountTrailingZeros w _ -> BVD.range w 0 (intValue w)
+    BVPopcount w x -> BVD.popcnt w (f x)
+    BVCountLeadingZeros w x -> BVD.clz w (f x)
+    BVCountTrailingZeros w x -> BVD.ctz w (f x)
 
     FloatPZero{} -> ()
     FloatNZero{} -> ()

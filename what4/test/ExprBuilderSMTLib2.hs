@@ -73,7 +73,7 @@ withSym :: (forall t . IsExprLoc t => SimpleExprBuilder t -> IO a) -> IO a
 withSym pred_gen = withIONonceGenerator $ \(gen :: NonceGenerator IO s) ->
   pred_gen =<< newExprBuilder (State :: State (What4Test s)) gen ()
 
-withYices :: (forall t. IsExprLoc t => SimpleExprBuilder t -> SolverProcess t (Yices.Connection t) -> IO ()) -> IO ()
+withYices :: (forall t. IsExprLoc t => SimpleExprBuilder t -> SolverProcess t Yices.Connection -> IO ()) -> IO ()
 withYices action = withSym $ \sym ->
   do extendConfig Yices.yicesOptions (getConfiguration sym)
      bracket
@@ -477,7 +477,7 @@ testBoundVarAsFree = testCase "boundvarasfree" $ withOnlineZ3 $ \sym s -> do
   expectFailure $ checkSatisfiable s "test" py
 
 zeroTupleTest ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -501,7 +501,7 @@ zeroTupleTest sym solver =
        isUnsat res2 @? "unsat"
 
 oneTupleTest ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -526,7 +526,7 @@ oneTupleTest sym solver =
 
 
 pairTest ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -544,7 +544,7 @@ pairTest sym solver =
        isSat res2 @? "neg sat"
 
 stringTest1 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -584,7 +584,7 @@ stringTest1 sym solver =
 
 
 stringTest2 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -626,7 +626,7 @@ stringTest2 sym solver =
        _ -> fail "expected satisfable model"
 
 stringTest3 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -675,7 +675,7 @@ stringTest3 sym solver =
 
 
 stringTest4 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -715,7 +715,7 @@ stringTest4 sym solver =
        _ -> fail "expected satisfable model"
 
 stringTest5 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -750,7 +750,7 @@ stringTest5 sym solver =
 
 
 forallTest ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -775,7 +775,7 @@ forallTest sym solver =
          _ -> fail "expected satisfible model"
 
 binderTupleTest1 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
@@ -787,7 +787,7 @@ binderTupleTest1 sym solver =
     isSat res  @? "sat"
 
 binderTupleTest2 ::
-  (IsExprLoc t, OnlineSolver t solver) =>
+  (IsExprLoc t, OnlineSolver solver) =>
   SimpleExprBuilder t ->
   SolverProcess t solver ->
   IO ()
